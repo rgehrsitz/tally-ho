@@ -75,3 +75,119 @@ describe('party voting rules', () => {
     expect(tally(party)[0].winners).toEqual(['gomez', 'morticia']);
   });
 });
+
+describe('couple signup', () => {
+  it('registers two new individuals and their linked couple in one submission', () => {
+    const party = seedParty();
+    applyAction(party, { action: 'register', type: 'couple', title: 'The Spooky Duo', partners: [
+      { title: 'Skeleton', names: 'Pat' }, { title: 'Disco Ghost', names: 'Lee' }
+    ] }, 'browser', false);
+    const added = party.entries.slice(8);
+    expect(added.map(e => e.type)).toEqual(['individual', 'individual', 'couple']);
+    expect(added[2].members).toEqual(added.slice(0, 2).map(e => e.id));
+    expect(added.every(e => !e.approved)).toBe(true);
+    expect(publicView(party, 'browser').entries).toHaveLength(8);
+    added.forEach(e => applyAction(party, { action: 'moderate', id: e.id, operation: 'approve' }, '', true));
+    party.phase = 'voting';
+    applyAction(party, { action: 'vote', category: 'best', entry: added[0].id }, 'browser', false);
+    applyAction(party, { action: 'vote', category: 'couple', entry: added[2].id }, 'browser', false);
+    expect(tally(party).find(r => r.category.id === 'best')!.winners).toEqual([added[0].id]);
+    expect(tally(party).find(r => r.category.id === 'couple')!.winners).toEqual([added[2].id]);
+  });
+  it('adds a new partner to an existing individual without duplicating that individual', () => {
+    const party = seedParty();
+    applyAction(party, { action: 'register', type: 'couple', title: 'Night Shift', partners: [
+      { entry: 'ghost' }, { title: 'Mummy', names: 'Jo' }
+    ] }, '', false);
+    expect(party.entries).toHaveLength(10);
+    expect(party.entries.at(-1)!.members).toEqual(['ghost', party.entries.at(-2)!.id]);
+    expect(party.entries.filter(e => e.id === 'ghost')).toHaveLength(1);
+  });
+  it('validates the whole signup before adding any entries or consuming numbers', () => {
+    const party = seedParty(); const before = structuredClone(party);
+    for (const partners of [
+      [{ title: 'Valid', names: 'Pat' }, { title: '', names: 'Lee' }],
+      [{ entry: 'ghost' }, { entry: 'ghost' }],
+      [{ entry: 'addams' }, { title: 'New', names: 'Pat' }],
+      [{ entry: 'missing' }, { title: 'New', names: 'Pat' }]
+    ]) {
+      expect(() => applyAction(party, { action: 'register', type: 'couple', title: 'Duo', partners }, '', false)).toThrow();
+      expect(party).toEqual(before);
+    }
+  });
+  it('lets hosts link pending entries while guests cannot discover or link them', () => {
+    const party = seedParty();
+    applyAction(party, { action: 'register', type: 'individual', title: 'Pending', names: 'Pat' }, '', false);
+    const pending = party.entries.at(-1)!;
+    const input = { action: 'register', type: 'couple', title: 'Duo', partners: [{ entry: pending.id }, { entry: 'ghost' }] };
+    expect(() => applyAction(party, input, '', false)).toThrow();
+    applyAction(party, input, '', true);
+    expect(eligible(party, party.entries.at(-1)!, party.categories[2])).toBe(false);
+    expect(publicView(party, '').entries).toHaveLength(8);
+  });
+});
+
+it('reserves room for every entry in a couple signup without partial registration', () => {
+  const party = seedParty();
+  for (let number = 9; number <= 119; number++) party.entries.push({ ...party.entries[0], id: `entry-${number}`, number });
+  party.nextNumber = 120;
+  const before = structuredClone(party);
+  expect(() => applyAction(party, { action: 'register', type: 'couple', title: 'Duo', partners: [
+    { title: 'Ghost', names: 'Pat' }, { title: 'Witch', names: 'Lee' }
+  ] }, '', false)).toThrow('entry limit');
+  expect(party).toEqual(before);
+});
+
+describe('approve a couple and both individuals', () => {
+  function pendingGroup() {
+    const party = seedParty();
+    applyAction(party, { action: 'register', type: 'couple', title: 'Spooky Duo', partners: [
+      { title: 'Skeleton', names: 'Pat' }, { title: 'Witch', names: 'Lee' }
+    ] }, '', false);
+    return party;
+  }
+  it('approves exactly the linked group, including an already-approved couple', () => {
+    const party = pendingGroup();
+    const couple = party.entries.at(-1)!;
+    applyAction(party, { action: 'register', type: 'individual', title: 'Unrelated', names: 'Other' }, '', false);
+    couple.approved = true;
+    applyAction(party, { action: 'moderate', id: couple.id, operation: 'approve-couple' }, '', true);
+    expect(party.entries.slice(8, 11).every(e => e.approved)).toBe(true);
+    expect(party.entries.at(-1)!.approved).toBe(false);
+    expect(eligible(party, couple, party.categories[2])).toBe(true);
+    expect(eligible(party, party.entries[8], party.categories[0])).toBe(true);
+    const before = structuredClone(party);
+    applyAction(party, { action: 'moderate', id: couple.id, operation: 'approve-couple' }, '', true);
+    expect(party).toEqual(before);
+  });
+  it('requires a host and rejects closed events without partial approval', () => {
+    const party = pendingGroup();
+    const input = { action: 'moderate', id: party.entries.at(-1)!.id, operation: 'approve-couple' };
+    const before = structuredClone(party);
+    expect(() => applyAction(party, input, '', false)).toThrow('sign-in');
+    expect(party).toEqual(before);
+    party.phase = 'closed';
+    const closed = structuredClone(party);
+    expect(() => applyAction(party, input, '', true)).toThrow('final');
+    expect(party).toEqual(closed);
+  });
+  it('validates all linked members before changing any approval', () => {
+    for (const members of [['entry-9', 'missing'], ['entry-9', 'entry-9'], ['entry-9', 'addams']]) {
+      const party = pendingGroup(); const couple = party.entries.at(-1)!;
+      couple.members = members;
+      const before = structuredClone(party);
+      expect(() => applyAction(party, { action: 'moderate', id: couple.id, operation: 'approve-couple' }, '', true)).toThrow();
+      expect(party).toEqual(before);
+    }
+  });
+  it('does not restore or partially approve hidden entries', () => {
+    const party = pendingGroup(); const couple = party.entries.at(-1)!;
+    party.entries[9].hidden = true;
+    const before = structuredClone(party);
+    expect(() => applyAction(party, { action: 'moderate', id: couple.id, operation: 'approve-couple' }, '', true)).toThrow('Restore');
+    expect(party).toEqual(before);
+    party.entries[9].hidden = false;
+    applyAction(party, { action: 'moderate', id: couple.id, operation: 'approve-couple' }, '', true);
+    expect(party.entries.slice(8).every(e => e.approved)).toBe(true);
+  });
+});

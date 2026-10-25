@@ -5,9 +5,9 @@ A fun, mobile-first voting app for a friend's annual Halloween party with 40–6
 ## Agreed v1 experience
 - QR code or short event link; phone browser, no installation or guest account.
 - Self-registration or host/helper-assisted registration. Costume title, display name, stable human-readable entry number, optional photo; missing photos must never block participation.
-- Individual entries and couple entries. **Each person's costume is independently eligible for individual awards AND may be part of a separate couple entry. The same person/costume may win both individual and couple categories.** Couple membership links two individual entries; each partner casts their own anonymous ballot.
+- Individual entries and couple entries. **Each person's costume is independently eligible for individual awards AND may be part of a separate couple entry. The same person/costume may win both individual and couple categories.** Couple membership links two individual entries; each partner casts their own anonymous ballot. Signup can create both individuals and their couple in one submission, or reuse existing individuals when a partner is added later. Pending entries stay private; a private browser signup receipt lets its submitter link a partner immediately, without waiting for approval. Hosts may also link pending entries. Signup receipts are independent of anonymous ballot identity.
 - Event-specific categories, each with individual/couple eligibility.
-- Host moderation: review, approve, edit, hide, and merge duplicate entries. Hidden/unapproved members make a linked couple ineligible.
+- Host moderation: review, approve, edit, hide, and merge duplicate entries. A host can approve a couple and both linked individuals in one atomic action; hidden entries must be restored explicitly first. Hidden/unapproved members make a linked couple ineligible.
 - Registration → Voting → Closed, controlled by the host. Late arrivals have a registration opportunity before voting opens.
 - One anonymous ballot choice per eligible category. Every choice is saved, can be replaced or cleared before voting closes, and can be skipped. Closure prevents all further ballot edits.
 - Private host tallies during voting; instant final counts/winners on closure. Identify ties rather than selecting an arbitrary winner. Host may reveal final results to guest phones.
@@ -43,4 +43,4 @@ No TV/projector/presentation mode, casting, animated awards ceremony, favorites 
 - Registration, moderation, voting, host result reveal, reset, and phone-sized layouts work end to end.
 
 ## Remaining production work
-Replace the file repository with PostgreSQL transactions and database uniqueness constraints; integrate object storage and host authentication; add multi-event routing, event creation/settings and a stable short event URL; verify concurrent close/vote operations and persistence under multiple instances; configure Netlify and deployment docs; rehearse on the party Wi-Fi with multiple physical phones.
+PostgreSQL transactions, event-scoped tables, and database uniqueness constraints are implemented and tested locally (with an optional file-demo fallback). Integrate object storage and production host authentication; add multi-event routing, event creation/settings and a stable short event URL; extend locally verified concurrent close/vote behavior to deployed multi-instance rehearsal; configure Netlify and deployment docs; rehearse on the party Wi-Fi with multiple physical phones.

@@ -2,7 +2,7 @@ export type Phase = 'registration' | 'voting' | 'closed';
 export type EntryType = 'individual' | 'couple';
 export interface Entry {
   id: string; number: number; title: string; names: string; type: EntryType;
-  members: string[]; approved: boolean; hidden: boolean; icon: string; photo?: string;
+  members: string[]; approved: boolean; hidden: boolean; icon: string; photo?: string; receiptHash?: string;
 }
 export interface Category { id: string; name: string; type: EntryType; }
 export interface Vote { voter: string; category: string; entry: string; sequence: number; }
@@ -44,7 +44,8 @@ export function publicView(party: Party, voter: string, host = false): PublicPar
   const { votes, sequence: _sequence, nextNumber: _nextNumber, ...rest } = party;
   const entries = host ? party.entries : party.entries.filter(e => e.approved && !e.hidden && (e.type === 'individual' || e.members.every(id => party.entries.some(p => p.id === id && p.approved && !p.hidden))));
   const choices = Object.fromEntries(votes.filter(v => v.voter === voter && entries.some(e => e.id === v.entry)).map(v => [v.category, v.entry]));
-  return { ...rest, entries, choices, host, ...(host || (party.phase === 'closed' && party.revealed) ? { results: tally(party) } : {}), ...(host ? { ballotCount: new Set(votes.map(v => v.voter)).size } : {}) };
+  const sanitize = ({ receiptHash: _receiptHash, ...entry }: Entry): Entry => entry;
+  return { ...rest, entries: entries.map(sanitize), choices, host, ...(host || (party.phase === 'closed' && party.revealed) ? { results: tally(party).map(result => ({ ...result, rows: result.rows.map(row => ({ ...row, entry: sanitize(row.entry) })) })) } : {}), ...(host ? { ballotCount: new Set(votes.map(v => v.voter)).size } : {}) };
 }
 function text(value: unknown, label: string, max = 80): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new Error(`${label} must be between 1 and ${max} characters.`);
@@ -60,15 +61,44 @@ export function applyAction(party: Party, input: Record<string, unknown>, voter:
   if (action === 'register') {
     if (party.phase !== 'registration') throw new Error('Registration is closed.');
     const type = kind(input.type);
+    const title = text(input.title, type === 'couple' ? 'Couple costume name' : 'Costume name');
+    // Stage the complete registration before mutating state. A couple can reuse
+    // existing individuals, add new ones, or do both in one atomic action.
+    const added: Entry[] = [];
+    let nextNumber = party.nextNumber;
     const members: string[] = [];
     if (type === 'couple') {
-      if (!Array.isArray(input.members) || input.members.length !== 2 || new Set(input.members).size !== 2 || !input.members.every(id => typeof id === 'string' && party.entries.some(e => e.id === id && e.type === 'individual' && e.approved && !e.hidden))) throw new Error('Choose two different approved individual entries.');
-      members.push(...input.members as string[]);
+      const partners = input.partners ?? (Array.isArray(input.members) ? input.members.map(entry => ({ entry })) : null);
+      if (!Array.isArray(partners) || partners.length !== 2) throw new Error('Enter two people for your couple.');
+      for (const [index, value] of partners.entries()) {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Enter two people for your couple.');
+        const partner = value as Record<string, unknown>;
+        if (partner.receiptHash !== undefined) {
+          const entry = party.entries.find(e => e.type === 'individual' && !e.hidden && e.receiptHash && e.receiptHash === partner.receiptHash);
+          if (!entry) throw new Error('This signup receipt is no longer available. Ask your host to help link your entry.');
+          members.push(entry.id);
+        } else if (partner.entry !== undefined) {
+          const entry = party.entries.find(e => e.id === partner.entry && e.type === 'individual' && !e.hidden && (e.approved || host));
+          if (!entry) throw new Error('Choose an available individual entry, or ask your host to link a pending entry.');
+          members.push(entry.id);
+        } else {
+          const names = text(partner.names, `Person ${index + 1} display name`);
+          const costume = text(partner.title, `Person ${index + 1} costume name`);
+          const number = nextNumber++;
+          const entry: Entry = { id: `entry-${number}`, number, title: costume, names, type: 'individual', members: [], approved: host, hidden: false, icon: '🎭' };
+          added.push(entry);
+          members.push(entry.id);
+        }
+      }
+      if (new Set(members).size !== 2) throw new Error('Choose two different people.');
       if (party.entries.some(e => e.type === 'couple' && !e.hidden && members.every(m => e.members.includes(m)))) throw new Error('These two costumes already have a couple entry.');
     }
-    if (party.entries.length >= 120) throw new Error('This demo has reached its entry limit.');
-    const number = party.nextNumber++;
-    party.entries.push({ id: `entry-${number}`, number, title: text(input.title, 'Costume name'), names: type === 'couple' ? members.map(id => party.entries.find(e => e.id === id)!.names).join(' & ') : text(input.names, 'Display name'), type, members, approved: host, hidden: false, icon: type === 'couple' ? '✨' : '🎭', ...(typeof input.photo === 'string' ? { photo: input.photo } : {}) });
+    if (party.entries.length + added.length + 1 > 120) throw new Error('This demo has reached its entry limit.');
+    const names = type === 'couple' ? members.map(id => [...party.entries, ...added].find(e => e.id === id)!.names).join(' & ') : text(input.names, 'Display name');
+    const number = nextNumber++;
+    added.push({ id: `entry-${number}`, number, title, names, type, members, approved: host, hidden: false, icon: type === 'couple' ? '✨' : '🎭', ...(typeof input.photo === 'string' ? { photo: input.photo } : {}), ...(type === 'individual' && typeof input.receiptHash === 'string' ? { receiptHash: input.receiptHash } : {}) });
+    party.entries.push(...added);
+    party.nextNumber = nextNumber;
   } else if (action === 'vote') {
     if (party.phase !== 'voting') throw new Error('Voting is not open. Your ballot has not changed.');
     const category = party.categories.find(c => c.id === input.category);
@@ -101,6 +131,16 @@ export function applyAction(party: Party, input: Record<string, unknown>, voter:
     const entry = party.entries.find(e => e.id === input.id);
     if (!entry) throw new Error('Entry not found.');
     if (action === 'edit') { entry.title = text(input.title, 'Costume name'); entry.names = text(input.names, 'Display name'); }
+    else if (input.operation === 'approve-couple') {
+      if (entry.type !== 'couple' || entry.members.length !== 2 || new Set(entry.members).size !== 2) throw new Error('Choose a couple linked to two different individuals.');
+      const members = entry.members.map(id => party.entries.find(e => e.id === id && e.type === 'individual'));
+      if (members.some(member => !member)) throw new Error('Both linked individual entries must exist.');
+      if (entry.hidden || members.some(member => member!.hidden)) throw new Error('Restore the couple and both people before approving them together.');
+      // Validate the whole group first, then approve within the repository's
+      // existing event transaction. Hidden entries are never silently restored.
+      entry.approved = true;
+      for (const member of members) member!.approved = true;
+    }
     else if (input.operation === 'approve') entry.approved = true;
     else if (input.operation === 'hide') entry.hidden = !entry.hidden;
     else throw new Error('Unknown moderation operation.');

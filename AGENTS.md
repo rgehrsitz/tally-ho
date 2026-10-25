@@ -12,10 +12,10 @@ Read PROJECT_BRIEF.md before changing product behavior. Build for a friendly par
 
 ## Architecture and scope
 - SvelteKit + TypeScript + Tailwind; target Netlify + managed PostgreSQL/photo storage (Supabase).
-- Current demo is a local single-process Node app using ignored .data/ files, with demo host PIN login. This is deliberately not production persistence or production authentication.
+- Local development supports transactional PostgreSQL via DATABASE_URL, with an optional single-process .data/ file fallback. Photos still use ignored .data/ files; demo PIN sessions remain in memory. This is not production hosting or authentication.
 - Keep pure rules in src/lib/domain.ts, persistence/auth in src/lib/server/, and sanitized guest/host response projections on the server.
 - Use Svelte 5 runes and the installed SvelteKit 3 conventions; #lib aliases are defined in package.json. Consult installed versions and official docs before applying older configuration examples.
-- Do not deploy this filesystem store to Netlify Functions. Replace it with PostgreSQL transactions and object storage first.
+- Do not deploy this backend to Netlify Functions yet. PostgreSQL persistence is implemented locally; replace filesystem photos with object storage and demo PIN sessions with production authentication first.
 - No secrets, real guest photos, .env files, local sessions, or .data files in Git. Keep .env.example safe.
 - Host photo upload is optional; keep entries without images fully usable.
 
