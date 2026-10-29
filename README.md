@@ -41,7 +41,7 @@ Then run:
 
 ```sh
 npm run db:migrate
-npm run db:seed
+npm run db:seed          # demo costumes; add -- --empty --name "..." for a real event
 npm run dev -- --host 0.0.0.0
 ```
 
@@ -94,7 +94,8 @@ and uses [one node-postgres client per transaction](https://node-postgres.com/fe
 
 1. Choose **Just me** or **Two of us**. Couples can enter both people and their
    shared costume in one form. For either person, choose a new person or reuse
-   an existing entry. Optional JPEG, PNG, or WebP photos must be under 2 MB.
+   an existing entry. Optional photos are shrunk in the browser to a JPEG of
+   at most 1600 px before upload (the server limit is 2 MB).
 2. On the couple card in the host desk, select **Approve couple + both people**
    to approve the couple and both linked individual entries in one transaction.
    This also works when the couple itself is already approved. Restore any hidden
@@ -117,7 +118,7 @@ and uses [one node-postgres client per transaction](https://node-postgres.com/fe
 6. Reset for another rehearsal. This restores the seed, clears ballots and removes
    known old uploads. Concurrent abandoned uploads can require manual cleanup.
 
-Views refresh every five seconds. Saves update immediately. Stale refreshes do
+Guest views refresh every ten seconds and the host desk every five. Saves update immediately. Stale refreshes do
 not overwrite a newer ballot save. The Halloween poster theme uses locally
 bundled fonts, photo-free entry cards, and readable voting controls; its design
 reference is [DESIGN.md](DESIGN.md).

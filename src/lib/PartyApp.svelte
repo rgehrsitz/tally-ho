@@ -70,12 +70,30 @@
     } catch (error) { failure = (error as Error).message; return false; }
     finally { busy = false; }
   }
+  function readDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Unable to read this photo.')); reader.readAsDataURL(blob); });
+  }
+  // Phone cameras produce 2-5 MB files; shrink to a gallery-sized JPEG first so
+  // signups don't fail on size. Redrawing also drops EXIF data such as location.
+  async function preparePhoto(file: File): Promise<string> {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+      canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+      if (blob && blob.size <= 2_000_000) return readDataUrl(blob);
+    } catch { /* Fall back to the original file if this browser can't decode it. */ }
+    if (file.size > 2_000_000) throw new Error('Please use a photo smaller than 2 MB.');
+    return readDataUrl(file);
+  }
   async function register(event: SubmitEvent) {
     event.preventDefault();
     let photoData: string | undefined;
     if (photoFile) {
-      if (photoFile.size > 2_000_000) { failure = 'Please use a photo smaller than 2 MB.'; return; }
-      try { photoData = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Unable to read this photo.')); reader.readAsDataURL(photoFile!); }); }
+      try { photoData = await preparePhoto(photoFile); }
       catch (error) { failure = (error as Error).message; return; }
     }
     const couple = entryType === 'couple';
@@ -107,6 +125,12 @@
       catch { failure = 'Could not make the QR code. You can still copy the event link.'; }
     }
   }
+  function toggleHidden(entry: Entry) {
+    // Hiding a couple member makes the couple ineligible, which drops its votes from the tally.
+    const couples = entry.hidden ? [] : party?.entries.filter(e => e.type === 'couple' && !e.hidden && e.members.includes(entry.id)) ?? [];
+    if (couples.length && party?.phase !== 'registration' && !confirm(`Hiding this entry also removes ${couples.map(c => `“${c.title}”`).join(' and ')} from voting, and its votes stop counting. To fix a duplicate, merge instead. Hide anyway?`)) return;
+    void send({ action: 'moderate', id: entry.id, operation: 'hide' }, entry.hidden ? 'Entry restored.' : 'Entry hidden. Linked couples are also ineligible while a member is hidden.');
+  }
   function startEdit(entry: Entry) { editing = entry.id; editTitle = entry.title; editNames = entry.names; }
   onMount(() => {
     shareUrl = `${window.location.origin}/`;
@@ -119,7 +143,8 @@
         } catch { /* optional storage */ }
       }
     })();
-    const timer = setInterval(() => { if (!busy && !document.hidden) void refresh(); }, 5000);
+    // Guests poll less often: with ~60 phones, every request is a serverless call.
+    const timer = setInterval(() => { if (!busy && !document.hidden) void refresh(); }, hostMode ? 5000 : 10000);
     return () => clearInterval(timer);
   });
 </script>
@@ -225,7 +250,7 @@
             <p class="small muted">{party.host ? 'You can link pending entries here. Use “Approve couple + both people” on the couple card to approve all three together.' : 'Your signups from this browser are available immediately. For an entry submitted on another browser, ask the host to link it while it’s pending. You don’t need to register twice.'}</p>
           {/if}
           {#key formKey}<label for="photo">{entryType === 'couple' ? 'Couple photo' : 'Costume photo'} <span class="muted">(optional)</span></label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp" onchange={(event) => photoFile = event.currentTarget.files?.[0]} />{/key}
-          <p class="small muted">JPEG, PNG, or WebP · under 2 MB. No photo? You’ll still get a spot in the lineup.</p>
+          <p class="small muted">JPEG, PNG, or WebP. Large phone photos are shrunk for you. No photo? You’ll still get a spot in the lineup.</p>
           <button class="primary" disabled={busy}>{busy ? 'Saving…' : entryType === 'couple' ? 'Register both of us' : hostMode ? 'Add costume' : 'Join the lineup'} <span>↗</span></button>
           <p class="small muted">{party.host ? 'New assisted entries are approved immediately.' : 'Your host will approve each new entry before it appears.'}</p>
         </form>
@@ -262,7 +287,7 @@
                   {/each}
                 </ul>
               {/if}
-              {#if hostMode}<div class="moderation"><span class="approval-label">{entry.type === 'couple' ? 'Couple: ' : ''}{entry.hidden ? 'Hidden' : entry.approved ? 'Approved' : 'Awaiting approval'}</span>{#if entry.type === 'couple' && (entry.hidden || entry.members.some(id => party?.entries.find(member => member.id === id)?.hidden))}<p class="small muted">Restore hidden entries before approving together.</p>{/if}{#if party.phase !== 'closed'}<div>{#if entry.type === 'couple' && (!entry.approved || entry.members.some(id => !party?.entries.find(member => member.id === id)?.approved))}<button disabled={busy || entry.hidden || entry.members.some(id => party?.entries.find(member => member.id === id)?.hidden)} onclick={() => send({ action: 'moderate', id: entry.id, operation: 'approve-couple' }, 'Couple and both individual entries approved.')}>Approve couple + both people</button>{:else if !entry.approved}<button disabled={busy} onclick={() => send({ action: 'moderate', id: entry.id, operation: 'approve' }, 'Entry approved.')}>Approve</button>{/if}<button disabled={busy} onclick={() => send({ action: 'moderate', id: entry.id, operation: 'hide' }, entry.hidden ? 'Entry restored.' : 'Entry hidden. Linked couples are also ineligible while a member is hidden.')}>{entry.hidden ? 'Restore' : 'Hide'}</button><button onclick={() => startEdit(entry)}>Edit</button></div>{/if}</div>{/if}
+              {#if hostMode}<div class="moderation"><span class="approval-label">{entry.type === 'couple' ? 'Couple: ' : ''}{entry.hidden ? 'Hidden' : entry.approved ? 'Approved' : 'Awaiting approval'}</span>{#if entry.type === 'couple' && (entry.hidden || entry.members.some(id => party?.entries.find(member => member.id === id)?.hidden))}<p class="small muted">Restore hidden entries before approving together.</p>{/if}{#if party.phase !== 'closed'}<div>{#if entry.type === 'couple' && (!entry.approved || entry.members.some(id => !party?.entries.find(member => member.id === id)?.approved))}<button disabled={busy || entry.hidden || entry.members.some(id => party?.entries.find(member => member.id === id)?.hidden)} onclick={() => send({ action: 'moderate', id: entry.id, operation: 'approve-couple' }, 'Couple and both individual entries approved.')}>Approve couple + both people</button>{:else if !entry.approved}<button disabled={busy} onclick={() => send({ action: 'moderate', id: entry.id, operation: 'approve' }, 'Entry approved.')}>Approve</button>{/if}<button disabled={busy} onclick={() => toggleHidden(entry)}>{entry.hidden ? 'Restore' : 'Hide'}</button><button onclick={() => startEdit(entry)}>Edit</button></div>{/if}</div>{/if}
             </div>
           </article>
         {:else}<div class="empty"><h3>No costumes here just yet.</h3><p>Try a different search, or be the first to join the lineup.</p></div>{/each}</div>
