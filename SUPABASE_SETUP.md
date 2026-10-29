@@ -85,9 +85,8 @@ Object keys are `<encoded-event-id>/<random-name>.<type>`. The database retains
 only `/api/photos/<random-name>.<type>`. That endpoint verifies approved/visible
 eligibility on every guest read, or verified host membership for pending photos,
 then proxies the bytes with `private, no-store` and `nosniff` headers. It never
-returns public or signed object URLs. Guest-visible photos are cached privately on
-phones for five minutes, so a gallery doesn't re-fetch every photo through the
-server; pending photos are never cached. Hiding an entry removes guest access on the
+returns public or signed object URLs. The check reads entries only, not ballots,
+to keep gallery loads light. Hiding an entry removes guest access on the
 next request. The upload also validates size, type and magic bytes on the server.
 
 If registration validation fails, the new upload is deleted. An unknown database

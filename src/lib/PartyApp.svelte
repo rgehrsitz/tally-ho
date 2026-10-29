@@ -249,8 +249,8 @@
             {/each}
             <p class="small muted">{party.host ? 'You can link pending entries here. Use “Approve couple + both people” on the couple card to approve all three together.' : 'Your signups from this browser are available immediately. For an entry submitted on another browser, ask the host to link it while it’s pending. You don’t need to register twice.'}</p>
           {/if}
-          {#key formKey}<label for="photo">{entryType === 'couple' ? 'Couple photo' : 'Costume photo'} <span class="muted">(optional)</span></label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onchange={(event) => photoFile = event.currentTarget.files?.[0]} />{/key}
-          <p class="small muted">Any phone photo works; we shrink it for you. No photo? You’ll still get a spot in the lineup.</p>
+          {#key formKey}<label for="photo">{entryType === 'couple' ? 'Couple photo' : 'Costume photo'} <span class="muted">(optional)</span></label><input id="photo" type="file" accept="image/jpeg,image/png,image/webp" onchange={(event) => photoFile = event.currentTarget.files?.[0]} />{/key}
+          <p class="small muted">JPEG, PNG, or WebP. Large phone photos are shrunk for you. No photo? You’ll still get a spot in the lineup.</p>
           <button class="primary" disabled={busy}>{busy ? 'Saving…' : entryType === 'couple' ? 'Register both of us' : hostMode ? 'Add costume' : 'Join the lineup'} <span>↗</span></button>
           <p class="small muted">{party.host ? 'New assisted entries are approved immediately.' : 'Your host will approve each new entry before it appears.'}</p>
         </form>

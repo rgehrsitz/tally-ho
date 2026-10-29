@@ -218,4 +218,18 @@ describe('party readiness', () => {
     expect(() => applyAction(party, { action: 'merge', source: duplicate, target: 'gomez' }, '', true)).toThrow('identical couples');
     expect(party).toEqual(before);
   });
+  it('counts hidden couples when checking merges, and blocks restoring a duplicate couple', () => {
+    const party = seedParty();
+    applyAction(party, { action: 'register', type: 'individual', title: 'Gomez again', names: 'Alex' }, '', true);
+    const duplicate = party.entries.at(-1)!.id;
+    applyAction(party, { action: 'register', type: 'couple', title: 'Addams II', partners: [{ entry: duplicate }, { entry: 'morticia' }] }, '', true);
+    const second = party.entries.at(-1)!.id;
+    applyAction(party, { action: 'moderate', id: second, operation: 'hide' }, '', true);
+    expect(() => applyAction(party, { action: 'merge', source: duplicate, target: 'gomez' }, '', true)).toThrow('identical couples');
+    applyAction(party, { action: 'moderate', id: 'addams', operation: 'hide' }, '', true);
+    applyAction(party, { action: 'register', type: 'couple', title: 'Addams III', partners: [{ entry: 'gomez' }, { entry: 'morticia' }] }, '', true);
+    expect(() => applyAction(party, { action: 'moderate', id: 'addams', operation: 'hide' }, '', true)).toThrow('Merge the duplicate');
+    applyAction(party, { action: 'merge', source: 'addams', target: party.entries.at(-1)!.id }, '', true);
+    expect(party.entries.some(e => e.id === 'addams')).toBe(false);
+  });
 });

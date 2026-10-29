@@ -60,6 +60,7 @@ function text(value: unknown, label: string, max = 80): string {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new RuleError(`${label} must be between 1 and ${max} characters.`);
   return value.trim();
 }
+function pairKey(members: string[]): string { return [...members].sort().join('|'); }
 function kind(value: unknown): EntryType {
   if (value !== 'individual' && value !== 'couple') throw new RuleError('Choose individual or couple.');
   return value;
@@ -152,7 +153,10 @@ export function applyAction(party: Party, input: Record<string, unknown>, voter:
       for (const member of members) member!.approved = true;
     }
     else if (input.operation === 'approve') entry.approved = true;
-    else if (input.operation === 'hide') entry.hidden = !entry.hidden;
+    else if (input.operation === 'hide') {
+      if (entry.hidden && entry.type === 'couple' && party.entries.some(e => e.id !== entry.id && e.type === 'couple' && !e.hidden && pairKey(e.members) === pairKey(entry.members))) throw new RuleError('These two people already have a visible couple entry. Merge the duplicate instead of restoring it.');
+      entry.hidden = !entry.hidden;
+    }
     else throw new RuleError('Unknown moderation operation.');
   } else if (action === 'merge') {
     if (party.phase === 'closed') throw new RuleError('Results are final.');
@@ -161,8 +165,9 @@ export function applyAction(party: Party, input: Record<string, unknown>, voter:
     if (!source || !target || source.id === target.id || source.type !== target.type) throw new RuleError('Choose two different entries of the same type.');
     if (party.entries.some(e => e.type === 'couple' && e.members.includes(source.id) && e.members.includes(target.id))) throw new RuleError('Cannot merge the two members of one couple.');
     // Merging A into B when A+C and B+C both exist would leave two identical couples.
-    const pairs = party.entries.filter(e => e.type === 'couple' && e.id !== source.id && !e.hidden).map(e => e.members.map(id => id === source.id ? target.id : id).sort().join('|'));
-    if (new Set(pairs).size !== pairs.length) throw new RuleError('Merging these would create two identical couples. Merge or hide the duplicate couple first.');
+    // Hidden couples count too, since they can be restored later.
+    const couples = party.entries.filter(e => e.type === 'couple' && e.id !== source.id).map(e => ({ moved: e.members.includes(source.id), pair: pairKey(e.members.map(id => id === source.id ? target.id : id)) }));
+    if (couples.some(a => a.moved && couples.some(b => b !== a && b.pair === a.pair))) throw new RuleError('Merging these would create two identical couples. Merge the duplicate couples first.');
     const latest = new Map<string, Vote>();
     for (const vote of party.votes) {
       const moved = { ...vote, entry: vote.entry === source.id ? target.id : vote.entry };
