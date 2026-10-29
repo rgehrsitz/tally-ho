@@ -1,15 +1,17 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { publicView } from '#lib/domain.ts';
+import { publicView, RuleError } from '#lib/domain.ts';
 import { isHost, login, logout, voterId } from '#lib/server/auth.ts';
-import { dataDir, readParty, actOnParty } from '#lib/server/store.ts';
+import { readParty, actOnParty } from '#lib/server/store.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { settings } from '#lib/server/runtime.ts';
+import { uploadPhoto, removePhoto } from '#lib/server/photos.ts';
 const headers = { 'cache-control': 'private, no-store' };
 export const GET: RequestHandler = async ({ cookies, url }) => {
-  const host = url.searchParams.get('host') === '1' && isHost(cookies);
-  return json(publicView(await readParty(), voterId(cookies), host), { headers });
+  try {
+    const host = url.searchParams.get('host') === '1' && await isHost(cookies);
+    return json({ ...publicView(await readParty(), voterId(cookies), host), authMode: settings().mode, canReset: settings().mode === 'demo' }, { headers });
+  } catch { return json({ error: 'Event services are unavailable. Ask the host to check setup.' }, { status: 503, headers }); }
 };
 export const POST: RequestHandler = async ({ request, cookies, url, getClientAddress }) => {
   if (request.headers.get('origin') !== url.origin) return json({ error: 'Request origin is not allowed.' }, { status: 403, headers });
@@ -20,21 +22,23 @@ export const POST: RequestHandler = async ({ request, cookies, url, getClientAdd
   let registrationReceipt: string | undefined;
   try {
     const input = JSON.parse(raw) as Record<string, unknown>;
-    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid request.');
-    if (input.action === 'login') login(cookies, input.pin, getClientAddress());
-    else if (input.action === 'logout') logout(cookies);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new RuleError('Invalid request.');
+    const config = settings();
+    let host = await isHost(cookies);
+    if (input.action === 'login') { await login(cookies, input, getClientAddress()); host = await isHost(cookies); }
+    else if (input.action === 'logout') { await logout(cookies); host = false; }
     else if (input.action === 'reset') {
-      if (!isHost(cookies)) return json({ error: 'Host sign-in required.' }, { status: 401, headers });
+      if (!host) return json({ error: 'Host sign-in required.' }, { status: 401, headers });
+      if (config.mode !== 'demo') return json({ error: 'Demo reset is disabled in Supabase mode.' }, { status: 403, headers });
       const previous = await readParty();
       await actOnParty({ action: 'reset' }, voterId(cookies), true);
       // Delete only known old files, never the directory: a registration may
       // upload a new photo after the reset transaction commits.
       for (const entry of previous.entries) {
         const name = entry.photo?.match(/^\/api\/photos\/([a-f0-9]{32}\.(?:png|jpeg|webp))$/)?.[1];
-        if (name) rmSync(resolve(dataDir, 'photos', name), { force: true });
+        if (name) await removePhoto(name);
       }
     } else {
-      const host = isHost(cookies);
       if (input.action !== 'register' && input.action !== 'vote' && !host) return json({ error: 'Host sign-in required.' }, { status: 401, headers });
       if (input.action === 'register') {
         delete input.photo;
@@ -49,33 +53,24 @@ export const POST: RequestHandler = async ({ request, cookies, url, getClientAdd
           if (!partner || typeof partner !== 'object' || Array.isArray(partner)) return partner;
           const { receiptHash: _untrustedHash, receipt, ...safe } = partner;
           if (receipt !== undefined) {
-            if (typeof receipt !== 'string' || !/^[a-f0-9]{64}$/.test(receipt)) throw new Error('Invalid signup receipt.');
-            if (safe.entry !== undefined) throw new Error('Choose one signup receipt or existing entry.');
+            if (typeof receipt !== 'string' || !/^[a-f0-9]{64}$/.test(receipt)) throw new RuleError('Invalid signup receipt.');
+            if (safe.entry !== undefined) throw new RuleError('Choose one signup receipt or existing entry.');
             return { ...safe, receiptHash: createHash('sha256').update(receipt).digest('hex') };
           }
           return safe;
         });
         if (input.photoData) {
-          if (typeof input.photoData !== 'string') throw new Error('Invalid photo.');
-          const match = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/.exec(input.photoData);
-          if (!match) throw new Error('Please choose a JPEG, PNG, or WebP photo.');
-          const bytes = Buffer.from(match[2], 'base64');
-          if (bytes.length > 2_000_000) throw new Error('Please use a photo smaller than 2 MB.');
-          const valid = match[1] === 'png' ? bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10])) : match[1] === 'jpeg' ? bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 : bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
-          if (!valid) throw new Error('The photo does not match its file type.');
-          const name = `${randomBytes(16).toString('hex')}.${match[1]}`;
-          mkdirSync(resolve(dataDir, 'photos'), { recursive: true });
-          uploaded = resolve(dataDir, 'photos', name);
-          writeFileSync(uploaded, bytes, { mode: 0o600 });
-          input.photo = `/api/photos/${name}`;
+          uploaded = await uploadPhoto(input.photoData);
+          input.photo = `/api/photos/${uploaded}`;
         }
       }
       await actOnParty(input, voterId(cookies), host);
       uploaded = undefined; // Committed photos must survive a later response/read failure.
     }
-    return json({ ...publicView(await readParty(), voterId(cookies), url.searchParams.get('host') === '1' && isHost(cookies)), ...(registrationReceipt ? { registrationReceipt } : {}) }, { headers });
+    return json({ ...publicView(await readParty(), voterId(cookies), url.searchParams.get('host') === '1' && host), authMode: config.mode, canReset: config.mode === 'demo', ...(registrationReceipt ? { registrationReceipt } : {}) }, { headers });
   } catch (error) {
-    if (uploaded) rmSync(uploaded, { force: true });
-    return json({ error: error instanceof Error ? error.message : 'Something went wrong.' }, { status: 400, headers });
+    if (uploaded && error instanceof RuleError) { try { await removePhoto(uploaded); } catch { console.error('An uncommitted photo needs storage cleanup.'); } }
+    else if (uploaded) console.error('A photo needs reconciliation after an uncertain database result; it was not deleted.');
+    return json({ error: error instanceof RuleError ? error.message : 'Unable to save while event services are unavailable. Please try again.' }, { status: error instanceof RuleError ? 400 : 503, headers });
   }
 };

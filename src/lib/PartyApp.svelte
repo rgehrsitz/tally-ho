@@ -10,6 +10,8 @@
   let notice = $state('');
   let failure = $state('');
   let pin = $state('');
+  let hostEmail = $state('');
+  let hostPassword = $state('');
   let entryType = $state<'individual' | 'couple'>('individual');
   let title = $state('');
   let names = $state('');
@@ -126,7 +128,7 @@
   <title>{hostMode ? 'Host desk' : 'The Halloween Social'} · Tally Ho</title>
   <meta name="description" content="A little friendly competition. Enter your costume, find your favorites, and cast your Halloween party ballot with Tally Ho." />
 </svelte:head>
-<div class="demo-strip">COSTUMES ON. SPIRITS UP. <span>DEMO EVENT</span></div>
+<div class="demo-strip">COSTUMES ON. SPIRITS UP. <span>{party?.authMode === 'supabase' ? 'COSTUME CONTEST' : 'DEMO EVENT'}</span></div>
 <header class="site-header">
   <a class="brand" href="/" aria-label="Tally Ho home"><span class="brand-icon">✳</span> Tally Ho<span class="brand-dot">.</span></a>
   <div class="header-links"><button class="text-button" onclick={share}>{sharing ? 'Hide QR' : 'Share event ↗'}</button><a class:active={hostMode} href={hostMode ? '/' : '/host'}>{hostMode ? 'Guest view' : 'Host desk'} <span aria-hidden="true">↗</span></a></div>
@@ -143,10 +145,13 @@
   {:else if hostMode && !party.host}
     <section class="login-panel">
       <span class="eyebrow">BEHIND THE SCENES</span><h1>The host desk.</h1><p>A little less counting.<br />A little more enjoying the party.</p>
-      <form onsubmit={(event) => { event.preventDefault(); void send({ action: 'login', pin }, 'Welcome to the host desk.'); pin = ''; }}>
-        <label for="pin">Host PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" bind:value={pin} required />
+      <form onsubmit={(event) => { event.preventDefault(); void send(party?.authMode === 'supabase' ? { action: 'login', email: hostEmail, password: hostPassword } : { action: 'login', pin }, 'Welcome to the host desk.'); pin = ''; hostPassword = ''; }}>
+        {#if party.authMode === 'supabase'}
+          <label for="host-email">Host email</label><input id="host-email" type="email" autocomplete="username" bind:value={hostEmail} required />
+          <label for="host-password">Password</label><input id="host-password" type="password" autocomplete="current-password" bind:value={hostPassword} required />
+        {:else}<label for="pin">Host PIN</label><input id="pin" type="password" inputmode="numeric" autocomplete="current-password" bind:value={pin} required />{/if}
         <button class="primary" disabled={busy}>Open host desk <span>→</span></button>
-      </form><p class="small muted">Default local demo PIN: <strong>2468</strong>, unless overridden with DEMO_HOST_PIN.</p>
+      </form>{#if party.authMode === 'supabase'}<p class="small muted">Use the Supabase account granted host access to this event. Ask the event organizer for access or password help.</p>{:else}<p class="small muted">Default local demo PIN: <strong>2468</strong>, unless overridden with DEMO_HOST_PIN.</p>{/if}
       {#if failure}<p role="alert" class="error">{failure}</p>{/if}
     </section>
   {:else}
@@ -274,7 +279,7 @@
         {#if party.phase === 'registration'}<form class="inline-form" onsubmit={async (event) => { event.preventDefault(); if (await send({ action: 'category', name: categoryName, type: categoryType }, 'Category added.')) categoryName = ''; }}><label>Award name<input bind:value={categoryName} maxlength="50" placeholder="e.g. Funniest Costume" required /></label><label>Eligible entries<select bind:value={categoryType}><option value="individual">Individuals</option><option value="couple">Couples</option></select></label><button class="secondary" disabled={busy}>Add category +</button></form>{:else}<p class="small muted">Categories are locked now that registration has closed.</p>{/if}
       </section>
       {#if party.phase !== 'closed'}<section class="utility-panel"><h2>Two entries, one costume?</h2><p class="muted">Merge duplicates of the same type. The destination keeps its details; the latest vote per voter and category survives.</p><form class="inline-form" onsubmit={async (event) => { event.preventDefault(); if (await send({ action: 'merge', source: mergeSource, target: mergeTarget }, 'Entries merged.')) { mergeSource = ''; mergeTarget = ''; } }}><label>Duplicate entry<select bind:value={mergeSource} required><option value="">Choose duplicate</option>{#each party.entries as entry}<option value={entry.id}>#{entry.number} · {entry.title}</option>{/each}</select></label><label>Keep this entry<select bind:value={mergeTarget} required><option value="">Choose destination</option>{#each party.entries.filter(e => e.id !== mergeSource && e.type === party?.entries.find(s => s.id === mergeSource)?.type) as entry}<option value={entry.id}>#{entry.number} · {entry.title}</option>{/each}</select></label><button class="secondary" disabled={busy || !mergeSource || !mergeTarget}>Merge entries</button></form></section>{/if}
-      <section class="reset-panel"><div><h3>Another practice round?</h3><p class="small muted">Reset removes all demo entries, photos, and ballots and restores the sample event.</p></div>{#if resetConfirm}<div><p class="small">Erase this demo’s changes?</p><button class="danger" disabled={busy} onclick={async () => { await send({ action: 'reset' }, 'Fresh start! The demo is back to registration.'); resetConfirm = false; tab = 'gallery'; }}>Yes, reset demo</button><button class="text-button" onclick={() => resetConfirm = false}>Cancel</button></div>{:else}<button class="secondary" onclick={() => resetConfirm = true}>Reset demo ↺</button>{/if}</section>
+      {#if party.canReset}<section class="reset-panel"><div><h3>Another practice round?</h3><p class="small muted">Reset removes all demo entries, photos, and ballots and restores the sample event.</p></div>{#if resetConfirm}<div><p class="small">Erase this demo’s changes?</p><button class="danger" disabled={busy} onclick={async () => { await send({ action: 'reset' }, 'Fresh start! The demo is back to registration.'); resetConfirm = false; tab = 'gallery'; }}>Yes, reset demo</button><button class="text-button" onclick={() => resetConfirm = false}>Cancel</button></div>{:else}<button class="secondary" onclick={() => resetConfirm = true}>Reset demo ↺</button>{/if}</section>{/if}
     {/if}
   {/if}
 </main>

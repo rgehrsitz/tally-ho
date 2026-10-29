@@ -4,11 +4,20 @@ import { Pool } from 'pg';
 import { DATABASE_URL, EVENT_ID } from '$app/env/private';
 import { applyAction, seedParty, type Party } from '../domain';
 import { PostgresRepository } from './postgres';
+import { settings } from './runtime';
 
 export const dataDir = resolve(process.cwd(), '.data');
 const file = resolve(dataDir, 'demo.json');
 // An explicit URL selects PostgreSQL; failures never silently fall back to files.
-const postgres = DATABASE_URL ? new PostgresRepository(new Pool({ connectionString: DATABASE_URL, max: 5, connectionTimeoutMillis: 5000 }), EVENT_ID || 'halloween-demo') : null;
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL, max: 3, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000 }) : null;
+pool?.on('error', () => console.error('An idle database connection failed.'));
+const postgres = pool ? new PostgresRepository(pool, EVENT_ID || 'halloween-demo') : null;
+export async function hasHostAccess(userId: string): Promise<boolean> {
+  const config = settings();
+  if (config.mode !== 'supabase' || !pool || !/^[a-f0-9-]{36}$/i.test(userId)) return false;
+  const result = await pool.query('SELECT 1 FROM event_hosts WHERE event_id=$1 AND user_id=$2', [config.eventId, userId]);
+  return !!result.rowCount;
+}
 function readFileParty(): Party {
   mkdirSync(dataDir, { recursive: true });
   try { return JSON.parse(readFileSync(file, 'utf8')) as Party; }
@@ -20,9 +29,11 @@ function saveFileParty(state: Party): void {
   renameSync(`${file}.tmp`, file);
 }
 export async function readParty(): Promise<Party> {
+  settings();
   return postgres ? postgres.read() : readFileParty();
 }
 export async function actOnParty(input: Record<string, unknown>, voter: string, host: boolean): Promise<Party> {
+  settings();
   if (postgres) return postgres.act(input, voter, host);
   // No awaits between reading and writing: single-process file demo only.
   const state = readFileParty();

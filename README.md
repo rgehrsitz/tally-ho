@@ -135,7 +135,7 @@ npm test
 npm run build
 ```
 
-`npm test` runs domain tests plus real PostgreSQL and HTTP integration tests. It
+`npm test` runs domain/configuration tests plus real PostgreSQL and HTTP integration tests, including Supabase-mode SDK tests against a local Auth/Storage protocol fixture. It
 starts an isolated native database on a random loopback port and a temporary Vite
 server with its own generated files and cache under ignored `.data/`, then stops both and removes test database files. It ignores your app's
 `DATABASE_URL` and never resets your development database. Test photo fixtures
@@ -148,30 +148,33 @@ npm run test:integration
 See [VERIFICATION.md](VERIFICATION.md) for verified scenarios and limitations.
 The Docker variant and physical phones still need their own rehearsal.
 
-## Remaining production boundaries
+## Supabase and Netlify preparation
 
-PostgreSQL persistence is implemented and verified locally. Photos still live in
-`.data/photos/`; host PIN sessions and throttling remain in memory and reset on
-restart. Browser cookies do not prove one vote per human. Couples sharing a phone
-need separate browser profiles/devices to vote independently. Verified self-vote
-blocking is outside the anonymous model.
+Supabase-mode code now uses a private photo bucket, verified email/password host
+sessions, event-specific database host grants, and persistent Auth cookies. Host
+PIN sessions and local photos remain available only in development demo mode.
+Guests still need no account; anonymous browser ballots do not prove one vote per
+human. Individual and linked-couple awards remain independent.
 
-**Do not deploy this backend to Netlify Functions yet.** It still needs Supabase
-object storage, production host authentication/authorization, server connection
-and role configuration, and the Netlify adapter. Retain the Node adapter for
-local development. Supabase integration and hosted multi-instance operation have
-not been verified.
+See [SUPABASE_SETUP.md](SUPABASE_SETUP.md) for server-only env values, migrations,
+private bucket SQL, host provisioning/revocation, and real-project rehearsal.
+`npm run db:grant-host -- <auth-user-uuid>` grants this event's host permission;
+`npm run db:revoke-host -- <auth-user-uuid>` removes it. Creating an Auth user by
+itself never grants access. Host account/password support is organizer-managed;
+public signup and recovery/invitation flows are not implemented.
 
-To run the built demo behind a local HTTPS reverse proxy:
+Local `npm run build` uses the Node adapter. `npm run build:netlify` validates
+production configuration and builds with the Netlify adapter; it does not deploy.
+Demo mode cannot run in a production build. The build command does not load local
+`.env` automatically; supply production variables in the process environment or,
+for a later authorized deploy, Netlify's Builds and Functions scopes.
 
-```sh
-ORIGIN=https://your-local-host DEMO_HOST_PIN=your-private-pin node build
-```
-
-Pass `DATABASE_URL` and `EVENT_ID` in the process environment to use PostgreSQL;
-`node build` does not read `.env` automatically. Production cookies are Secure,
-so authenticated use requires HTTPS and a matching `ORIGIN`. Use the development
-server for the phone rehearsal.
+**Live Supabase verification and deployment remain outstanding.** Tests exercise
+real PostgreSQL plus the Supabase SDK against a local HTTP protocol fixture;
+this is not proof of a live project's bucket, Auth, role, email, TLS or connection
+configuration. Netlify artifacts compile locally; hosted multi-instance and
+physical-phone rehearsals still need to be done. No site was created or deployed.
+Existing local photos are not automatically uploaded to a cloud project.
 
 Source: [rgehrsitz/tally-ho](https://github.com/rgehrsitz/tally-ho). Licensed under
 the [MIT License](LICENSE). The application has not been deployed. TV/projector/presentation mode is

@@ -11,7 +11,7 @@ try {
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(837461920)");
       await client.query('CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY)');
-      for (const version of ['001_party', '002_signup_receipts']) {
+      for (const version of ['001_party', '002_signup_receipts', '003_event_hosts']) {
         const result = await client.query('SELECT version FROM schema_migrations WHERE version=$1', [version]);
         if (!result.rowCount) {
           await client.query(readFileSync(new URL(`../migrations/${version}.sql`, import.meta.url), 'utf8'));
@@ -25,5 +25,12 @@ try {
   } else if (process.argv[2] === 'seed') {
     await new PostgresRepository(pool, process.env.EVENT_ID || 'halloween-demo').seed();
     console.log('Demo seed ready; existing event left unchanged.');
-  } else throw new Error('Use migrate or seed.');
+  } else if (process.argv[2] === 'grant-host' || process.argv[2] === 'revoke-host') {
+    const id = process.argv[3];
+    if (!id || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) throw new Error('Supply the verified Supabase Auth user UUID.');
+    const event = process.env.EVENT_ID || 'halloween-demo';
+    if (process.argv[2] === 'grant-host') await pool.query('INSERT INTO event_hosts (event_id,user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [event,id]);
+    else await pool.query('DELETE FROM event_hosts WHERE event_id=$1 AND user_id=$2', [event,id]);
+    console.log('Event host permission updated.');
+  } else throw new Error('Use migrate, seed, grant-host or revoke-host.');
 } finally { await pool.end(); }

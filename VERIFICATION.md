@@ -6,7 +6,7 @@ user authorization. The application has not been deployed.
 ## Automated
 
 - `npm run check`: no errors or warnings, including scripts and integration tests.
-- `npm test`: 36 passing tests (18 domain + 18 PostgreSQL/HTTP integration tests).
+- `npm test`: 44 passing tests (18 domain + 3 configuration + 23 PostgreSQL/HTTP integration tests).
 - `npm run build`: successful Node-adapter build.
 - `git diff --check`: clean.
 - Versioned migration and non-destructive seed both ran twice successfully against
@@ -137,6 +137,39 @@ with no way to enter new people or add a partner from an individual card.
   moderation list. No server behavior or award eligibility rules changed.
 - All 36 tests, type checking and the Node build passed.
 
+## Supabase storage/authentication milestone
+
+- Supabase-mode Auth uses the actual SSR/JavaScript SDKs with HttpOnly cookies,
+  server-verified users, persistent refresh tokens and event-specific PostgreSQL
+  membership. Demo PIN and reset are unavailable in this mode.
+- Storage uses a private bucket through a separate server-only secret-key client.
+  Objects are event-scoped; guest photo reads still check entry visibility before
+  downloading bytes. No signed/public Storage URL is returned.
+- Local tests use actual PostgreSQL plus a local HTTP **protocol fixture** for
+  Supabase Auth/Storage. These are adapter tests, not live cloud integration.
+- New tests cover configuration failures/TLS requirements, non-host users and
+  forged metadata roles, wrong-event membership, permission revocation, cookie
+  flags, refresh, logout, provider invalidation, and an app-process restart with
+  the same browser session.
+- Storage tests cover pending-host access, approval, hide/revocation, denied
+  direct object requests, public-bucket rejection, invalid signatures/types and
+  size limits, cleanup after validation failure, outages and photo-free signup.
+- Production responses sanitize unexpected database/service errors. Unknown
+  database commit failures retain the private object for reconciliation rather
+  than risking deletion of a photo whose entry may have committed.
+- Browser rehearsal in Supabase mode used an isolated local fixture event:
+  email/password form without PIN, valid login/reload, reset absent, PNG signup,
+  pending privacy, host photo access, approval/public access, hidden-photo 404,
+  and sign-out. Host layout fit at 390px.
+- Node-adapter build and Netlify Node-function adapter build compile locally.
+  Netlify build used placeholder values only; no real cloud endpoints were
+  contacted. Client output was checked for server-secret fixture values.
+- Migration 003 and non-destructive seed applied locally; no remote migrations,
+  account creation, storage buckets, invitations or deployments were performed.
+- Setup and outstanding release gates are in SUPABASE_SETUP.md. No Supabase
+  project credentials are configured; real Auth/Storage, provider rate limits,
+  password support and hosted network/connection behavior remain unverified.
+
 ## Earlier demo verification
 
 The initial file demo also passed its nine domain tests and a desktop/390px
@@ -146,8 +179,9 @@ That record is historical; this milestone's full UI rehearsal used PostgreSQL.
 
 ## Remaining production work and unverified environments
 
-- Photos are still local files. Supabase object storage and production host
-  authentication are not implemented. PIN sessions/throttling remain in memory.
+- Supabase storage and host-auth adapters are implemented and fixture-tested.
+  Live project setup is outstanding. The optional local demo still uses files
+  and in-memory PIN sessions; it is disabled outside the development server.
 - Docker/PostgreSQL 17 launcher, physical phones, party Wi-Fi, HTTPS built-server
   use, and a full 40–60 guest rehearsal were not verified this round.
 - Concurrent independent database connections were tested locally; deployed
