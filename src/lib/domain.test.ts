@@ -191,3 +191,31 @@ describe('approve a couple and both individuals', () => {
     expect(party.entries.slice(8).every(e => e.approved)).toBe(true);
   });
 });
+
+describe('party readiness', () => {
+  it('starts a real event empty under its own name', () => {
+    const party = seedParty({ empty: true, name: 'Smith Halloween 2026' });
+    expect(party.entries).toEqual([]);
+    expect(party.name).toBe('Smith Halloween 2026');
+    expect(party.categories.length).toBeGreaterThan(0);
+    applyAction(party, { action: 'register', type: 'individual', title: 'Pumpkin', names: 'Kit' }, '', false);
+    expect(party.entries[0].number).toBe(1);
+    expect(() => seedParty({ name: ' ' })).toThrow('Event name');
+  });
+  it('frees entry slots when a host hides junk signups', () => {
+    const party = seedParty();
+    for (let number = 9; number <= 120; number++) party.entries.push({ ...party.entries[0], id: `entry-${number}`, number, hidden: true });
+    party.nextNumber = 121;
+    applyAction(party, { action: 'register', type: 'individual', title: 'Real guest', names: 'Ana' }, '', false);
+    expect(party.entries.at(-1)!.title).toBe('Real guest');
+  });
+  it('rejects a merge that would leave two identical couples', () => {
+    const party = seedParty();
+    applyAction(party, { action: 'register', type: 'individual', title: 'Gomez again', names: 'Alex' }, '', true);
+    const duplicate = party.entries.at(-1)!.id;
+    applyAction(party, { action: 'register', type: 'couple', title: 'Addams II', partners: [{ entry: duplicate }, { entry: 'morticia' }] }, '', true);
+    const before = structuredClone(party);
+    expect(() => applyAction(party, { action: 'merge', source: duplicate, target: 'gomez' }, '', true)).toThrow('identical couples');
+    expect(party).toEqual(before);
+  });
+});

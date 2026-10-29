@@ -15,7 +15,10 @@ export interface Result { category: Category; total: number; rows: { entry: Entr
 export interface PublicParty extends Omit<Party, 'votes' | 'sequence' | 'nextNumber'> {
   choices: Record<string, string>; results?: Result[]; ballotCount?: number; host: boolean; authMode?: 'demo' | 'supabase'; canReset?: boolean;
 }
-export function seedParty(): Party {
+export interface SeedOptions { empty?: boolean; name?: string }
+/** Demo seed by default. A real event starts empty under its own name, because
+ * production has no reset to clear the sample costumes. */
+export function seedParty(options: SeedOptions = {}): Party {
   const entries: Entry[] = [
     { id: 'gomez', number: 1, title: 'Gomez Addams', names: 'Alex', icon: '🌹', type: 'individual', members: [], approved: true, hidden: false },
     { id: 'morticia', number: 2, title: 'Morticia Addams', names: 'Jamie', icon: '🕷️', type: 'individual', members: [], approved: true, hidden: false },
@@ -26,9 +29,10 @@ export function seedParty(): Party {
     { id: 'addams', number: 7, title: 'The Addamses', names: 'Alex & Jamie', icon: '🖤', type: 'couple', members: ['gomez', 'morticia'], approved: true, hidden: false },
     { id: 'cosmic', number: 8, title: 'Moonlight & Magic', names: 'Sam & Riley', icon: '✨', type: 'couple', members: ['witch', 'astronaut'], approved: true, hidden: false }
   ];
-  return { version: 1, id: 'halloween-demo', name: 'The Halloween Social', phase: 'registration', revealed: false,
-    entries, categories: [ { id: 'best', name: 'Best Costume', type: 'individual' }, { id: 'creative', name: 'Most Creative', type: 'individual' }, { id: 'couple', name: 'Best Couple', type: 'couple' } ],
-    votes: [], sequence: 0, nextNumber: 9 };
+  const name = options.name === undefined ? 'The Halloween Social' : text(options.name, 'Event name');
+  return { version: 1, id: 'halloween-demo', name, phase: 'registration', revealed: false,
+    entries: options.empty ? [] : entries, categories: [ { id: 'best', name: 'Best Costume', type: 'individual' }, { id: 'creative', name: 'Most Creative', type: 'individual' }, { id: 'couple', name: 'Best Couple', type: 'couple' } ],
+    votes: [], sequence: 0, nextNumber: options.empty ? 1 : 9 };
 }
 export function eligible(party: Party | PublicParty, entry: Entry, category: Category): boolean {
   return entry.approved && !entry.hidden && entry.type === category.type &&
@@ -41,9 +45,13 @@ export function tally(party: Party): Result[] {
     return { category, rows, total, winners: total ? rows.filter(row => row.count === rows[0].count).map(row => row.entry.id) : [] };
   });
 }
+/** Whether guests may see an entry (and its photo). Pending or hidden members hide their couple. */
+export function guestVisible(entries: Entry[], entry: Entry): boolean {
+  return entry.approved && !entry.hidden && (entry.type === 'individual' || entry.members.every(id => entries.some(p => p.id === id && p.approved && !p.hidden)));
+}
 export function publicView(party: Party, voter: string, host = false): PublicParty {
   const { votes, sequence: _sequence, nextNumber: _nextNumber, ...rest } = party;
-  const entries = host ? party.entries : party.entries.filter(e => e.approved && !e.hidden && (e.type === 'individual' || e.members.every(id => party.entries.some(p => p.id === id && p.approved && !p.hidden))));
+  const entries = host ? party.entries : party.entries.filter(e => guestVisible(party.entries, e));
   const choices = Object.fromEntries(votes.filter(v => v.voter === voter && entries.some(e => e.id === v.entry)).map(v => [v.category, v.entry]));
   const sanitize = ({ receiptHash: _receiptHash, ...entry }: Entry): Entry => entry;
   return { ...rest, entries: entries.map(sanitize), choices, host, ...(host || (party.phase === 'closed' && party.revealed) ? { results: tally(party).map(result => ({ ...result, rows: result.rows.map(row => ({ ...row, entry: sanitize(row.entry) })) })) } : {}), ...(host ? { ballotCount: new Set(votes.map(v => v.voter)).size } : {}) };
@@ -94,7 +102,8 @@ export function applyAction(party: Party, input: Record<string, unknown>, voter:
       if (new Set(members).size !== 2) throw new RuleError('Choose two different people.');
       if (party.entries.some(e => e.type === 'couple' && !e.hidden && members.every(m => e.members.includes(m)))) throw new RuleError('These two costumes already have a couple entry.');
     }
-    if (party.entries.length + added.length + 1 > 120) throw new RuleError('This demo has reached its entry limit.');
+    // Hidden entries don't count, so a host can clear junk signups and free their slots.
+    if (party.entries.filter(e => !e.hidden).length + added.length + 1 > 120) throw new RuleError('This demo has reached its entry limit.');
     const names = type === 'couple' ? members.map(id => [...party.entries, ...added].find(e => e.id === id)!.names).join(' & ') : text(input.names, 'Display name');
     const number = nextNumber++;
     added.push({ id: `entry-${number}`, number, title, names, type, members, approved: host, hidden: false, icon: type === 'couple' ? '✨' : '🎭', ...(typeof input.photo === 'string' ? { photo: input.photo } : {}), ...(type === 'individual' && typeof input.receiptHash === 'string' ? { receiptHash: input.receiptHash } : {}) });
@@ -151,6 +160,9 @@ export function applyAction(party: Party, input: Record<string, unknown>, voter:
     const target = party.entries.find(e => e.id === input.target);
     if (!source || !target || source.id === target.id || source.type !== target.type) throw new RuleError('Choose two different entries of the same type.');
     if (party.entries.some(e => e.type === 'couple' && e.members.includes(source.id) && e.members.includes(target.id))) throw new RuleError('Cannot merge the two members of one couple.');
+    // Merging A into B when A+C and B+C both exist would leave two identical couples.
+    const pairs = party.entries.filter(e => e.type === 'couple' && e.id !== source.id && !e.hidden).map(e => e.members.map(id => id === source.id ? target.id : id).sort().join('|'));
+    if (new Set(pairs).size !== pairs.length) throw new RuleError('Merging these would create two identical couples. Merge or hide the duplicate couple first.');
     const latest = new Map<string, Vote>();
     for (const vote of party.votes) {
       const moved = { ...vote, entry: vote.entry === source.id ? target.id : vote.entry };

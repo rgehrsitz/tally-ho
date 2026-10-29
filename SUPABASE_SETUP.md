@@ -16,6 +16,7 @@ chat, commit them, or give them a `PUBLIC_` / `VITE_` prefix.
 APP_MODE=supabase
 EVENT_ID=halloween-demo
 DATABASE_URL=postgresql://.../postgres?sslmode=verify-full
+DATABASE_CA_CERT="-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 SUPABASE_SECRET_KEY=your-server-secret-key
@@ -29,6 +30,18 @@ three connections per function instance, and unnamed queries; it does not rely
 on session-local state or prepared-statement names. Set a connection budget for
 the Supabase project's size before live load testing.
 
+**Database CA certificate.** Supabase's database certificates chain to Supabase's
+own root CA, which Node does not trust by default, so `verify-full` fails with
+"self-signed certificate in certificate chain" unless the CA is supplied. Download
+it from Project Settings → Database → SSL Configuration, and set its PEM text as
+`DATABASE_CA_CERT` (literal `\n` line breaks are accepted, which suits Netlify's
+single-line env values). The app then verifies the chain and hostname with that CA.
+`npm run build:netlify` warns when a Supabase `DATABASE_URL` has no CA set.
+
+Put Netlify functions and the Supabase project in the same region. Each write
+holds the event lock for about a dozen round trips, so latency between them sets
+how quickly a burst of votes clears.
+
 The publishable key is used only with Auth. The separate secret key is used only
 for private Storage access, without session persistence. No keys or user/session
 objects are returned in guest/host party projections. Browser Auth cookies are
@@ -41,13 +54,15 @@ References: [connection choices](https://supabase.com/docs/guides/database/conne
 
 ```sh
 npm run db:migrate
-npm run db:seed
+npm run db:seed -- --empty --name "Your Party Name"
 ```
 
 These commands read `.env`. Migrations are versioned and transactional; seed is
 non-destructive. Migration 003 adds `event_hosts(event_id, user_id)` with RLS and
 no browser policies. Existing entry/couple/vote rules and receipts are preserved.
-The seed is fictional demo content. Event setup/editing beyond the current host
+For the real party, always use `--empty`: plain `db:seed` loads fictional demo
+costumes, and reset is disabled in Supabase mode, so they could only be hidden.
+The default categories are created either way; edit them on the host desk. Event setup/editing beyond the current host
 controls remains a future feature; choose a separate EVENT_ID for rehearsal.
 
 Do not grant browser/anon/authenticated roles access to the contest tables.
@@ -70,7 +85,9 @@ Object keys are `<encoded-event-id>/<random-name>.<type>`. The database retains
 only `/api/photos/<random-name>.<type>`. That endpoint verifies approved/visible
 eligibility on every guest read, or verified host membership for pending photos,
 then proxies the bytes with `private, no-store` and `nosniff` headers. It never
-returns public or signed object URLs. Hiding an entry removes guest access on the
+returns public or signed object URLs. Guest-visible photos are cached privately on
+phones for five minutes, so a gallery doesn't re-fetch every photo through the
+server; pending photos are never cached. Hiding an entry removes guest access on the
 next request. The upload also validates size, type and magic bytes on the server.
 
 If registration validation fails, the new upload is deleted. An unknown database

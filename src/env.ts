@@ -6,6 +6,7 @@ export const variables = defineEnvVars({
   SUPABASE_SECRET_KEY: { schema: (value: string | undefined) => value ?? '' },
   SUPABASE_PHOTO_BUCKET: { schema: (value: string | undefined) => value ?? 'costume-photos' },
   DATABASE_URL: { schema: (value: string | undefined) => value ?? '' },
+  DATABASE_CA_CERT: { schema: (value: string | undefined) => value ?? '' },
   EVENT_ID: { schema: (value: string | undefined) => value ?? 'halloween-demo' },
   DEMO_HOST_PIN: { schema: (value: string | undefined) => value ?? '' }
 });

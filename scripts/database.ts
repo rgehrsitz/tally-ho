@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
 import { PostgresRepository } from '../src/lib/server/postgres.ts';
+import { databaseConfig } from '../src/lib/server/settings.ts';
 
 if (!process.env.DATABASE_URL) throw new Error('Set DATABASE_URL to your local PostgreSQL database.');
-const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+const pool = new Pool({ ...databaseConfig(process.env.DATABASE_URL, process.env.DATABASE_CA_CERT || undefined), max: 1 });
 try {
   if (process.argv[2] === 'migrate') {
     const client = await pool.connect();
@@ -23,8 +24,12 @@ try {
     } catch (error) { await client.query('ROLLBACK'); throw error; }
     finally { client.release(); }
   } else if (process.argv[2] === 'seed') {
-    await new PostgresRepository(pool, process.env.EVENT_ID || 'halloween-demo').seed();
-    console.log('Demo seed ready; existing event left unchanged.');
+    // --empty starts a real event with no sample costumes; --name sets its title.
+    const args = process.argv.slice(3);
+    const nameAt = args.indexOf('--name');
+    if (nameAt >= 0 && !args[nameAt + 1]) throw new Error('Supply an event name after --name.');
+    const created = await new PostgresRepository(pool, process.env.EVENT_ID || 'halloween-demo').seed({ empty: args.includes('--empty'), ...(nameAt >= 0 ? { name: args[nameAt + 1] } : {}) });
+    console.log(created ? `Event ${process.env.EVENT_ID || 'halloween-demo'} created${args.includes('--empty') ? ' with no entries' : ' with demo entries'}.` : 'Event already exists; left unchanged.');
   } else if (process.argv[2] === 'grant-host' || process.argv[2] === 'revoke-host') {
     const id = process.argv[3];
     if (!id || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) throw new Error('Supply the verified Supabase Auth user UUID.');

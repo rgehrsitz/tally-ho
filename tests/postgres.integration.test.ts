@@ -224,6 +224,31 @@ describe('real PostgreSQL transactions across independent pools', () => {
     } finally { await client.query('ROLLBACK'); client.release(); }
   });
 
+  it('creates an empty named event and writes a large event in one statement per table', async () => {
+    const real = new PostgresRepository(secondPool, 'real-party');
+    expect(await real.seed({ empty: true, name: 'The Real Party' })).toBe(true);
+    expect(await real.seed()).toBe(false);
+    let state = await real.read();
+    expect(state).toMatchObject({ name: 'The Real Party', entries: [], nextNumber: 1 });
+    for (let i = 0; i < 70; i++) await real.act({ action: 'register', type: 'individual', title: `Costume ${i}`, names: `Guest ${i}` }, '', true);
+    await real.act({ action: 'remove-category', id: 'couple' }, '', true);
+    await real.act({ action: 'phase', phase: 'voting' }, '', true);
+    for (let i = 0; i < 60; i++) await real.act({ action: 'vote', category: 'best', entry: `entry-${(i % 70) + 1}` }, `voter-${i}`, false);
+    const statements: string[] = [];
+    const counting = { query: secondPool.query.bind(secondPool), connect: async () => {
+      const client = await secondPool.connect();
+      return { query: (sql: string, values?: unknown[]) => { statements.push(sql); return client.query(sql, values); }, release: () => client.release() };
+    } } as unknown as Pool;
+    await new PostgresRepository(counting, 'real-party').act({ action: 'vote', category: 'creative', entry: 'entry-3' }, 'voter-0', false);
+    // Constant cost: BEGIN, lock, 4 loads, update, 3 deletes, 3 inserts, COMMIT.
+    expect(statements.filter(sql => sql.trimStart().startsWith('INSERT'))).toHaveLength(3);
+    expect(statements.length).toBeLessThanOrEqual(14);
+    state = await real.read();
+    expect(state.entries).toHaveLength(70);
+    expect(state.votes).toHaveLength(61);
+    expect(tally(state).find(r => r.category.id === 'best')!.total).toBe(60);
+  });
+
   it('isolates event data and leaves existing events unchanged on seed', async () => {
     const separate = new PostgresRepository(secondPool, 'another-party');
     await separate.seed();
